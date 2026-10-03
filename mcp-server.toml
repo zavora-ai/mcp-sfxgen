@@ -1,0 +1,55 @@
+server_id = "mcp_sfxgen"
+display_name = "Sound Effects MCP Server"
+version = "0.1.0"
+domain = "media"
+sdk_version = "0.3.0"
+risk_level = "low"
+# Writes only inside the configured allowed_roots.
+writes_allowed = "gated"
+transports = ["stdio"]
+# Only the ElevenLabs backend needs a key (an environment variable or the OS keychain); Stable Audio 3 runs locally.
+credentials = ["vault://zavora/elevenlabs-api-key"]
+governance_gates = []
+environments = ["development"]
+
+[[tools]]
+name = "generate_sfx"
+description = "Generate sound effects from a text prompt (WAV files with sidecars): local Stable Audio 3, or ElevenLabs in the cloud"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = ["vault://zavora/elevenlabs-api-key"]
+
+[[tools]]
+name = "get_job"
+description = "Get status, stage progress and result of a sound-effect job"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "cancel_job"
+description = "Cancel a queued or running sound-effect job; no partial files are left behind"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_models"
+description = "List sound-effect models with their status, licences, privacy and memory needs; never loads weights or spends credits"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "account_status"
+description = "ElevenLabs plan and credits (when the key can read the account) plus the local credit ledger totals; free and cached"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = ["vault://zavora/elevenlabs-api-key"]
+
+[[tools]]
+name = "unload_models"
+description = "Stop the kept-alive local model worker to free its memory"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []

@@ -1,0 +1,27 @@
+# mcp-sfxgen model registry. Adding a model on an existing backend is config only.
+# Weights are never downloaded by the server: `list_models` prints the exact `hf download` command and the size.
+
+[[model]]
+id = "sa3-small-sfx"
+backend = "sa3_mlx"
+duration_s = { min = 0.5, max = 30.0 }     # the model allows 120 s; 30 s is plenty for SFX
+native_loop = false
+memory_mb = 3700                          # measured process footprint (the MLX peak is 2.7 GB; np.load copies push it higher)
+typical_s = 1.5
+options = { kind = "sa3_mlx", dit = "dit_sm-sfx_f16.npz", decoder = "same_s_decoder_f32.npz", t5 = "t5gemma_f16.npz", steps = 8 }
+files = [{ repo = "stabilityai/stable-audio-3-optimized", revision = "da6edc54ddba10bfd79a077102ded687f80e882b", paths = ["MLX/dit_sm-sfx_f16.npz", "MLX/t5gemma_f16.npz", "MLX/same_s_decoder_f32.npz"], mb = 1626, gated = false }]
+licence = [
+  { component = "SA3 small-sfx weights", name = "Stability AI Community License", commercial = "conditional", note = "free under US$1M annual revenue after registering with Stability", url = "https://stability.ai/community-license-agreement" },
+  { component = "T5Gemma encoder", name = "Gemma Terms of Use", commercial = "conditional", url = "https://ai.google.dev/gemma/terms" },
+  { component = "stable-audio-3 code", name = "MIT", commercial = "yes" },
+]
+
+[[model]]
+id = "elevenlabs-sfx-v2"
+backend = "elevenlabs"
+duration_s = { min = 0.5, max = 30.0 }
+native_loop = true
+typical_s = 4
+options = { kind = "elevenlabs", model_id = "eleven_text_to_sound_v2", prompt_influence = 0.3 }
+licence = [{ component = "ElevenLabs output", name = "ElevenLabs Terms of Use", commercial = "conditional", note = "paid plans only; the Free plan is non-commercial" }]
+privacy = "the prompt is sent to ElevenLabs"

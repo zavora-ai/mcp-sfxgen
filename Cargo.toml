@@ -1,0 +1,74 @@
+[package]
+name = "mcp-sfxgen"
+version = "0.1.0"
+edition = "2024"
+authors = ["James Karanja Maina"]
+license = "Apache-2.0"
+homepage = "https://www.zavora.ai"
+repository = "https://github.com/zavora-ai/mcp-sfxgen"
+rust-version = "1.94.1"
+description = "Text-to-sound-effect MCP server with local (Stable Audio 3 on MLX) and cloud (ElevenLabs) backends"
+keywords = ["mcp", "audio", "sound-effects", "stable-audio", "local-ai"]
+categories = ["multimedia::audio", "development-tools"]
+
+[features]
+default = ["sa3_mlx", "elevenlabs"]
+# Stable Audio 3 small-sfx on Apple Silicon through MLX: a Python worker in the model's own venv, stdio JSON lines
+sa3_mlx = []
+# ElevenLabs Sound Effects over HTTPS (cloud)
+elevenlabs = ["dep:reqwest"]
+# deterministic fake backend and fake worker for tests and demos
+mock = []
+
+[dependencies]
+adk-mcp-sdk = { version = "0.3.0", git = "https://github.com/zavora-ai/adk-mcp-sdk.git", rev = "fd08c98466853ae368f0e5f3aae3102dde0bfc35" }
+tokio = { version = "1.47", features = ["full"] }
+tokio-util = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rmcp = { version = "3.1.2", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
+schemars = "1"
+anyhow = "1"
+thiserror = "2"
+toml = "0.8"
+dirs = "7"
+sha2 = "0.10"
+rand = "0.9"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+# audio pipeline (tasks 4-6)
+hound = "3.5"
+ebur128 = "0.1.10"
+rubato = "5"
+audioadapter = "5"
+audioadapter-buffers = "5.1"
+# ElevenLabs backend (task 11)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# macOS reads the key through the `security` CLI (design §1); other platforms use the OS keyring.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+keyring = "4.2"
+
+[[bin]]
+name = "mcp-sfxgen"
+path = "src/main.rs"
+
+# Stand-in for the Python worker in tests; never installed (needs the `mock` feature).
+[[bin]]
+name = "fake-worker"
+path = "src/bin/fake_worker.rs"
+required-features = ["mock"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.47", features = ["full", "test-util"] }
+rmcp = { version = "3.1.2", features = ["client", "transport-child-process"] }
+
+[workspace]

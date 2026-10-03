@@ -1,0 +1,58 @@
+# mcp-sfxgen configuration.
+# Location: $MCP_SFXGEN_CONFIG_DIR/config.toml, else the platform config dir:
+#   macOS   ~/Library/Application Support/mcp-sfxgen/config.toml
+#   Linux   $XDG_CONFIG_HOME/mcp-sfxgen/config.toml (~/.config/mcp-sfxgen/config.toml)
+#   Windows %APPDATA%\mcp-sfxgen\config.toml
+# Written on first run; edit freely. `~` is expanded. Relative paths are resolved against the config
+# directory's parent, so a workspace keeps its config in `<workspace>/.sfxgen/` and lists roots like "generated".
+
+# Sound files are written to, and only to, these roots.
+allowed_roots = ["generated", "nairobi-racer", "sunfall", "lab"]
+# Where sounds go when a request gives no output_dir / output_path. Must be inside a root.
+default_output_dir = "generated/sfx"
+default_model = "sa3-small-sfx"
+# Free memory that must remain after loading a local model (MB). The server refuses rather than swapping.
+memory_headroom_mb = 1000
+# Process names (or command-line fragments) named in the refusal message when memory is short
+# (matched case-insensitively, by substring).
+heavy_processes = ["UnrealEditor", "Blender", "VoiceStudio", "sd-server", "trellis", "mcp-meshgen"]
+# How long finished jobs stay queryable with get_job (seconds).
+job_ttl_s = 3600
+# Jobs waiting behind the running one, per lane (local and cloud), before generate_sfx returns queue_full.
+queue_depth = 4
+# Unload the local model worker after this many idle seconds (0 = only on unload_models).
+idle_unload_s = 600
+# Hugging Face hub cache holding the weights listed in models.toml. Nothing is ever downloaded by the server.
+# Empty or absent = $HF_HUB_CACHE, then $HF_HOME/hub, then ~/.cache/huggingface/hub.
+# hf_cache = ""
+
+[sa3_mlx]
+# Stable Audio 3 on Apple Silicon: the `optimized/mlx` folder of the stable-audio-3 clone. The worker runs with
+# <dir>/.venv/bin/python (Windows: <dir>\.venv\Scripts\python.exe).
+dir = "~/Developer/unreal_engine/tools/stable-audio-3/optimized/mlx"
+# The date (YYYY-MM-DD) you accepted the Stability AI Community License and the Gemma Terms of Use.
+# Empty = the local model reports needs_licence_acceptance and will not run.
+licence_accepted = ""
+
+[elevenlabs]
+# The API key is read from this environment variable, else from the macOS Keychain item below
+# (other platforms: the OS keyring). It is never written to this file.
+api_key_env = "ELEVENLABS_API_KEY"
+keychain_service = "elevenlabs-api-key"
+# Your ElevenLabs plan. "free" marks every file non-commercial; account_status overrides it when the key can read the account.
+plan = "free"
+# Parallel requests allowed by the plan (Free 2, Starter 3, Creator 5, Pro 10).
+concurrency = 2
+# A call that would cost more than this is refused before anything is sent (credits).
+per_call_credit_limit = 300
+# Credits per local calendar day; a call that would pass it is refused before anything is sent.
+daily_credit_limit = 2000
+# Rates used for the estimate (measured on a Free plan, 2026-10-03): 10 credits per second of audio when
+# duration_s is given, 50 when the model picks the length.
+credits_per_second = 10
+credits_auto_duration = 50
+timeout_s = 60
+
+[post]
+# Default true-peak ceiling of the processed copy, in dBTP. A call can pass `true_peak_dbtp: null` to turn the limiter off.
+true_peak_dbtp = -1.0
