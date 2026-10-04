@@ -10,6 +10,13 @@ use super::{AudioError, Clip, db_to_lin, lin_to_db};
 pub const TRIM_THRESHOLD_DB: f64 = -60.0;
 /// Default pad kept around the content by [`trim_silence`].
 pub const TRIM_PAD_MS: f64 = 5.0;
+/// Silence is also anything quieter than the clip's peak by this much, so a generated clip's room tone (often louder
+/// than the absolute threshold) is trimmed too.
+pub const TRIM_RELATIVE_DB: f64 = -45.0;
+/// An event starts where the level first comes within this of the peak ...
+pub const EVENT_ONSET_DB: f64 = -30.0;
+/// ... and has died away once it stays below this.
+pub const EVENT_TAIL_DB: f64 = -45.0;
 
 fn ms_to_frames(ms: f64, sr: u32) -> usize {
     (ms.max(0.0) * sr as f64 / 1000.0).round() as usize
@@ -19,7 +26,8 @@ fn ms_to_frames(ms: f64, sr: u32) -> usize {
 /// of margin. An all-silent clip is returned unchanged (there is nothing to anchor a cut on).
 pub fn trim_silence(clip: &Clip, threshold_db: f64, pad_ms: f64) -> Clip {
     let ch = clip.channels as usize;
-    let thr = db_to_lin(threshold_db) as f32;
+    let peak = clip.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let thr = (db_to_lin(threshold_db) as f32).max(peak * db_to_lin(TRIM_RELATIVE_DB) as f32);
     let loud = |f: usize| {
         clip.samples[f * ch..(f + 1) * ch]
             .iter()
@@ -38,6 +46,48 @@ pub fn trim_silence(clip: &Clip, threshold_db: f64, pad_ms: f64) -> Clip {
         sample_rate: clip.sample_rate,
         channels: clip.channels,
     }
+}
+
+/// Cut a generated clip down to its event, at most `target_s` long: from 5 ms before the level first comes within
+/// `EVENT_ONSET_DB` of the peak, to 30 ms after the last frame above `EVENT_TAIL_DB` (or `target_s`, whichever is
+/// sooner), with a 2 ms fade-in and a 10 ms fade-out. Used when a short sound was generated longer than asked
+/// (models smear very short clips). A silent clip is just cut to `target_s`.
+pub fn extract_event(clip: &Clip, target_s: f64) -> Clip {
+    let ch = clip.channels as usize;
+    let frames = clip.frames();
+    let target =
+        ((target_s * f64::from(clip.sample_rate)).round() as usize).clamp(1, frames.max(1));
+    let peak = clip.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let level = |f: usize| {
+        clip.samples[f * ch..(f + 1) * ch]
+            .iter()
+            .fold(0.0f32, |m, s| m.max(s.abs()))
+    };
+    let (start, end) = if peak <= 0.0 {
+        (0, target.min(frames))
+    } else {
+        let on = peak * db_to_lin(EVENT_ONSET_DB) as f32;
+        let tail = peak * db_to_lin(EVENT_TAIL_DB) as f32;
+        let first = (0..frames).find(|&f| level(f) >= on).unwrap_or(0);
+        let start = first.saturating_sub(ms_to_frames(5.0, clip.sample_rate));
+        let limit = (start + target).min(frames);
+        let last = (start..limit)
+            .rev()
+            .find(|&f| level(f) >= tail)
+            .unwrap_or(first);
+        (
+            start,
+            (last + 1 + ms_to_frames(30.0, clip.sample_rate)).min(limit),
+        )
+    };
+    let mut out = Clip {
+        samples: clip.samples[start * ch..end.max(start + 1) * ch].to_vec(),
+        sample_rate: clip.sample_rate,
+        channels: clip.channels,
+    };
+    fade_in(&mut out, 2.0);
+    fade_out(&mut out, 10.0);
+    out
 }
 
 /// Raised-cosine gain at position `t` in 0..=1 (0 -> 0.0, 1 -> 1.0).
@@ -338,5 +388,53 @@ mod tests {
         }
         let s = seam(&c);
         assert!((s.head_tail_rms_db - 20.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn extract_event_finds_a_short_burst_in_a_long_noisy_clip() {
+        // 2 s at 48 kHz: noise at -50 dBFS, a 0.2 s burst at 0.8 s
+        let sr = 48_000u32;
+        let mut rng = 0x1234_5678u32;
+        let mut samples = Vec::with_capacity(2 * sr as usize);
+        for f in 0..2 * sr as usize {
+            rng ^= rng << 13;
+            rng ^= rng >> 17;
+            rng ^= rng << 5;
+            let noise = ((rng as f32 / u32::MAX as f32) - 0.5) * 2.0 * 0.003;
+            let t = f as f32 / sr as f32;
+            let burst = if (0.8..1.0).contains(&t) {
+                (t * 900.0 * std::f32::consts::TAU).sin() * 0.8
+            } else {
+                0.0
+            };
+            samples.push(noise + burst);
+        }
+        let clip = Clip {
+            samples,
+            sample_rate: sr,
+            channels: 1,
+        };
+        let ev = extract_event(&clip, 0.5);
+        let dur = ev.frames() as f64 / f64::from(sr);
+        assert!((0.2..=0.5).contains(&dur), "event length {dur}");
+        // it starts at the burst, not at the beginning of the clip
+        let lead = ev.samples.iter().position(|s| s.abs() > 0.1).unwrap() as f64 / f64::from(sr);
+        assert!(lead < 0.01, "lead-in {lead}");
+    }
+
+    #[test]
+    fn trim_silence_cuts_room_tone_louder_than_the_absolute_threshold() {
+        let sr = 48_000u32;
+        let mut samples = vec![0.002f32; sr as usize]; // -54 dBFS room tone: above -60 dBFS, 53 dB under the peak
+        for (i, s) in samples.iter_mut().enumerate().skip(20_000).take(4_800) {
+            *s = ((i as f32) * 0.1).sin() * 0.9;
+        }
+        let clip = Clip {
+            samples,
+            sample_rate: sr,
+            channels: 1,
+        };
+        let t = trim_silence(&clip, TRIM_THRESHOLD_DB, TRIM_PAD_MS);
+        assert!(t.frames() < 6_000, "kept {} frames", t.frames());
     }
 }

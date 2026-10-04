@@ -8,7 +8,7 @@ duration_s = { min = 0.5, max = 30.0 }     # the model allows 120 s; 30 s is ple
 native_loop = false
 memory_mb = 3700                          # measured process footprint (the MLX peak is 2.7 GB; np.load copies push it higher)
 typical_s = 1.5
-options = { kind = "sa3_mlx", dit = "dit_sm-sfx_f16.npz", decoder = "same_s_decoder_f32.npz", t5 = "t5gemma_f16.npz", steps = 8 }
+options = { kind = "sa3_mlx", dit = "dit_sm-sfx_f16.npz", decoder = "same_s_decoder_f32.npz", t5 = "t5gemma_f16.npz", steps = 8, min_generate_s = 2.0 }  # shorter requests are generated at 2 s and cut back to the event
 files = [{ repo = "stabilityai/stable-audio-3-optimized", revision = "da6edc54ddba10bfd79a077102ded687f80e882b", paths = ["MLX/dit_sm-sfx_f16.npz", "MLX/t5gemma_f16.npz", "MLX/same_s_decoder_f32.npz"], mb = 1626, gated = false }]
 licence = [
   { component = "SA3 small-sfx weights", name = "Stability AI Community License", commercial = "conditional", note = "free under US$1M annual revenue after registering with Stability", url = "https://stability.ai/community-license-agreement" },

@@ -93,6 +93,10 @@ pub enum BackendOptions {
         t5: String,
         #[serde(default = "default_sa3_steps")]
         steps: u32,
+        /// Shortest clip the model is asked for. Stable Audio 3 small smears anything under about 1.5 s (too few
+        /// latent frames), so shorter requests are generated at this length and cut back to the event.
+        #[serde(default = "default_sa3_min_generate_s")]
+        min_generate_s: f64,
     },
     /// ElevenLabs Sound Effects: the API model id and the default prompt influence (0 to 1).
     Elevenlabs {
@@ -109,6 +113,10 @@ pub enum BackendOptions {
 
 fn default_sa3_steps() -> u32 {
     8
+}
+
+fn default_sa3_min_generate_s() -> f64 {
+    2.0
 }
 
 fn default_prompt_influence() -> f64 {
@@ -380,9 +388,13 @@ impl ModelSpec {
                 decoder,
                 t5,
                 steps,
+                min_generate_s,
             } => {
                 if *steps == 0 {
                     return fail("options.steps must be at least 1".into());
+                }
+                if !(0.0..=30.0).contains(min_generate_s) {
+                    return fail("options.min_generate_s must be between 0 and 30 seconds".into());
                 }
                 for (key, name) in [("dit", dit), ("decoder", decoder), ("t5", t5)] {
                     let listed = self
@@ -759,7 +771,8 @@ mod tests {
                 dit: "dit_sm-sfx_f16.npz".into(),
                 decoder: "same_s_decoder_f32.npz".into(),
                 t5: "t5gemma_f16.npz".into(),
-                steps: 8
+                steps: 8,
+                min_generate_s: 2.0
             }
         );
         assert_eq!(m.files.len(), 1);

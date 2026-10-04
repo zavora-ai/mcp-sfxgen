@@ -181,7 +181,8 @@ async fn success_returns_batched_clips_and_reports_stages() {
     let req = &f.requests()[0];
     assert_eq!(req["op"], "generate");
     assert_eq!(req["prompt"], "a cartoon meep");
-    assert_eq!(req["seconds"], 1.0);
+    // 1 s is under the model's 2 s minimum: it is generated at 2 s and each clip is cut back to its event.
+    assert_eq!(req["seconds"], 2.0);
     assert_eq!(req["steps"], 8);
     assert_eq!(req["seeds"], serde_json::json!([101, 102]));
     assert_eq!(req["out_dir"], f.out_dir().display().to_string());
@@ -210,9 +211,10 @@ async fn a_loop_asks_for_the_extra_seconds_and_default_duration_is_two() {
         )
         .await
         .unwrap();
+    // A 1 s loop needs 1 s + extra; that's under the 2 s minimum, so it is generated at 2 s and cut to 1 s + extra.
     let extra = mcp_sfxgen::audio::edit::loop_extra_s(1.0);
     let sent = &f.requests()[0];
-    assert!((sent["seconds"].as_f64().unwrap() - (1.0 + extra)).abs() < 1e-9);
+    assert!((sent["seconds"].as_f64().unwrap() - 2.0).abs() < 1e-9);
     assert_eq!(sent["steps"], 4);
     assert!((clips[0].duration_s() - (1.0 + extra)).abs() < 1e-3);
 

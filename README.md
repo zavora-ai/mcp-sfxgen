@@ -354,6 +354,8 @@ legacy MCP 2025-11-25 initialize flow.
 - ElevenLabs has no seed, so its results can't be reproduced. A `seed` there is ignored with a warning.
 - A local batch isn't bit-identical to the same seed on its own (see [Outputs](#outputs)).
 - Prompts past about 256 tokens are cut silently by the local text encoder.
+- Stable Audio 3 small can't make clips under about 1.5 s. Shorter local requests are generated at `min_generate_s` (2 s)
+  and cut back to the event, so a 0.3 s request returns at most 0.3 s, but costs a 2 s generation.
 - Audio-to-audio and inpainting aren't exposed.
 
 ## License

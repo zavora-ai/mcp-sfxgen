@@ -20,6 +20,9 @@ First version: text-to-sound-effect over MCP, with a local and a cloud backend.
 - Audio pipeline in Rust: loop (crossfade for local models), trim, mono, 48 kHz resampling, loudness, a true-peak limiter
   (-1 dBTP by default), fades, 16- or 24-bit output. Each clip also keeps an untouched raw copy and a sidecar with
   parameters, measurements, waveform peaks, licences and warnings.
+- Short sounds: Stable Audio 3 small smears clips under about 1.5 s, so the local backend generates anything shorter at
+  `options.min_generate_s` (default 2 s) and cuts each clip back to its event (onset to decay, at most the requested length,
+  with short fades). `trim_silence` also treats anything 45 dB under the clip's peak as silence.
 - Model registry (`models.toml`) with five statuses (`ready`, `missing_files` with the exact `hf download` command,
   `needs_licence_acceptance`, `needs_credentials`, `backend_unavailable`) and every component's licence, commercial use and
   privacy.

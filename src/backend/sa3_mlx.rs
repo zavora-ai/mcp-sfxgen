@@ -449,6 +449,10 @@ struct JobShape {
     seconds: f64,
     steps: u32,
     seeds: Vec<u64>,
+    /// A short one-shot generated longer than asked (`min_generate_s`): cut each clip back to its event this long.
+    event_s: Option<f64>,
+    /// A short loop generated longer than asked: keep only the first `loop_s` seconds for the loop crossfade.
+    loop_s: Option<f64>,
 }
 
 #[async_trait::async_trait]
@@ -480,6 +484,7 @@ impl SfxBackend for Sa3MlxBackend {
         }
         let BackendOptions::Sa3Mlx {
             steps: default_steps,
+            min_generate_s,
             ..
         } = &model.options
         else {
@@ -487,7 +492,7 @@ impl SfxBackend for Sa3MlxBackend {
                 reason: format!("model `{}` has no sa3_mlx options", model.id),
             });
         };
-        let shape = resolve_shape(request, *default_steps);
+        let shape = resolve_shape(request, *default_steps, *min_generate_s);
         let id = format!("g{:08x}", rand::random::<u32>());
         let message = json!({
             "op": "generate",
@@ -562,20 +567,31 @@ impl SfxBackend for Sa3MlxBackend {
 
 /// Seconds, steps and seeds the worker will be asked for.
 ///
-/// A loop is asked for `d + loop_extra_s(d)` seconds; the job finisher crossfades it back to `d`. Seeds are
+/// A loop is asked for `d + loop_extra_s(d)` seconds; the job finisher crossfades it back to `d`. Nothing is asked for
+/// shorter than `min_generate_s` (the model smears very short clips): a short one-shot is generated longer and cut
+/// back to its event, a short loop is generated longer and cut to `d + extra` before the crossfade. Seeds are
 /// `[s, s+1, …]` with `s` random in `0..2^31` when the caller gave none (distinct, as the worker requires).
-fn resolve_shape(request: &BackendRequest, default_steps: u32) -> JobShape {
+fn resolve_shape(request: &BackendRequest, default_steps: u32, min_generate_s: f64) -> JobShape {
     let d = request.duration_s.unwrap_or(DEFAULT_DURATION_S);
-    let seconds = if request.loop_ {
+    let wanted = if request.loop_ {
         d + crate::audio::edit::loop_extra_s(d)
     } else {
         d
+    };
+    let seconds = wanted.max(min_generate_s);
+    let extended = seconds > wanted + 1e-9;
+    let (event_s, loop_s) = match (extended, request.loop_) {
+        (false, _) => (None, None),
+        (true, false) => (Some(d), None),
+        (true, true) => (None, Some(wanted)),
     };
     let first = request
         .seed
         .unwrap_or_else(|| u64::from(rand::random::<u32>() & 0x7fff_ffff));
     JobShape {
         seconds,
+        event_s,
+        loop_s,
         steps: request.steps.unwrap_or(default_steps),
         seeds: (0..u64::from(request.variations.max(1)))
             .map(|i| first.wrapping_add(i))
@@ -616,7 +632,7 @@ async fn read_result(
             .await
             .map_err(|e| bad(format!("couldn't read {}: {e}", path.display())))?;
         let _ = tokio::fs::remove_file(path).await;
-        let clip = Clip::from_f32le_bytes(&bytes, ev.sample_rate, ev.channels)
+        let mut clip = Clip::from_f32le_bytes(&bytes, ev.sample_rate, ev.channels)
             .map_err(|e| bad(format!("{}: {e}", path.display())))?;
         if ev.frames > 0 && clip.frames() as u64 != ev.frames {
             return Err(bad(format!(
@@ -625,6 +641,12 @@ async fn read_result(
                 clip.frames(),
                 ev.frames
             )));
+        }
+        if let Some(t) = shape.event_s {
+            clip = crate::audio::edit::extract_event(&clip, t);
+        } else if let Some(t) = shape.loop_s {
+            let keep = ((t * f64::from(clip.sample_rate)).round() as usize).min(clip.frames());
+            clip.samples.truncate(keep * clip.channels as usize);
         }
         clips.push(RawClip {
             samples: clip.samples,
@@ -636,7 +658,9 @@ async fn read_result(
             details: json!({
                 "batch": { "size": size, "index": index },
                 "steps": shape.steps,
-                "seconds_requested": shape.seconds,
+                "seconds_generated": shape.seconds,
+                "event_extracted_to_s": shape.event_s,
+                "loop_cut_to_s": shape.loop_s,
                 "timings": ev.timings,
                 "peak_mlx_mb": ev.peak_mlx_mb,
                 "active_mlx_mb": ev.active_mlx_mb,
@@ -978,13 +1002,13 @@ mod tests {
             seed: Some(100),
             ..Default::default()
         };
-        let shape = resolve_shape(&r, 8);
+        let shape = resolve_shape(&r, 8, 0.0);
         assert_eq!(shape.seeds, [100, 101, 102]);
         assert_eq!((shape.seconds, shape.steps), (1.0, 8));
         r.seed = None;
         r.loop_ = true;
         r.steps = Some(4);
-        let shape = resolve_shape(&r, 8);
+        let shape = resolve_shape(&r, 8, 0.0);
         assert!(shape.seeds[0] < (1 << 31) && shape.seeds[1] == shape.seeds[0] + 1);
         assert!(
             (shape.seconds - (1.0 + crate::audio::edit::loop_extra_s(1.0))).abs() < 1e-9,
@@ -994,7 +1018,7 @@ mod tests {
         assert_eq!(shape.steps, 4);
         r.duration_s = None;
         r.loop_ = false;
-        assert_eq!(resolve_shape(&r, 8).seconds, DEFAULT_DURATION_S);
+        assert_eq!(resolve_shape(&r, 8, 0.0).seconds, DEFAULT_DURATION_S);
     }
 
     #[test]
@@ -1031,5 +1055,26 @@ mod tests {
             (f.kind.as_str(), f.hint.as_str()),
             ("worker_exception", "fake")
         );
+    }
+
+    #[test]
+    fn short_requests_are_generated_at_the_minimum_and_marked_for_cutting() {
+        let mut r = BackendRequest {
+            duration_s: Some(0.5),
+            variations: 1,
+            seed: Some(7),
+            ..Default::default()
+        };
+        let s = resolve_shape(&r, 8, 2.0);
+        assert_eq!((s.seconds, s.event_s, s.loop_s), (2.0, Some(0.5), None));
+        r.loop_ = true;
+        r.duration_s = Some(1.0);
+        let s = resolve_shape(&r, 8, 2.0);
+        assert_eq!(s.seconds, 2.0);
+        assert!((s.loop_s.unwrap() - (1.0 + crate::audio::edit::loop_extra_s(1.0))).abs() < 1e-9);
+        r.loop_ = false;
+        r.duration_s = Some(5.0);
+        let s = resolve_shape(&r, 8, 2.0);
+        assert_eq!((s.seconds, s.event_s, s.loop_s), (5.0, None, None));
     }
 }
